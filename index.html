@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Steer</title>
+<meta name="description" content="A page of text that writes itself toward wherever you point.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#000; --fg:#dcdcdc; --dim:#8c8c8c; --faint:#2e2e2e; --cell:#bdbdbd; --hi:#272727; --red:#ff4a3d;
+  --lh:22px; --font:'JetBrains Mono',ui-monospace,'Cascadia Mono',Consolas,monospace;
+  --w-ln:30px; --w-an:66px; --w-bars:69px; --w-dash:25px; --cellw:6px; --bb:44px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:13px/var(--lh) var(--font);overflow:hidden;-webkit-text-size-adjust:100%}
+body.narrow{--w-ln:24px; --w-an:44px; --w-bars:39px; --w-dash:14px; --cellw:3px; --bb:128px; font-size:12px}
+
+#hd{position:fixed;top:0;left:0;right:0;padding:14px 16px 22px;background:linear-gradient(var(--bg) 65%,transparent);z-index:3;pointer-events:none;font-size:12px;line-height:16px;color:var(--dim)}
+#hd b{display:block;color:var(--fg);font-weight:500;letter-spacing:.24em;margin-bottom:2px}
+
+#stage{position:fixed;inset:0 0 var(--bb) 0;overflow:hidden;touch-action:none;cursor:crosshair;outline:none;user-select:none;-webkit-user-select:none}
+#stage:focus-visible{outline:1px dashed var(--red);outline-offset:-6px}
+#page{position:absolute;top:0;padding-top:88px;transition:transform .5s cubic-bezier(.2,.7,.2,1);will-change:transform}
+.row{display:flex;height:var(--lh);white-space:pre}
+.ln{width:var(--w-ln);padding-right:10px;text-align:right;color:var(--dim)}
+.an{width:var(--w-an);padding-right:8px;text-align:right;color:var(--dim);overflow:hidden;white-space:nowrap}
+.an b{font-weight:400;color:var(--dim)} .an b.r{color:var(--red)}
+.bars{width:var(--w-bars);display:flex;gap:1px;align-items:center}
+.bars i{flex:0 0 var(--cellw);height:8px;background:var(--faint)}
+.bars i.on{background:var(--cell)} .bars i.hot{background:var(--red)}
+.dash{width:var(--w-dash);color:var(--faint);text-align:center}
+.w{cursor:crosshair}
+.w.pin{text-decoration:underline;text-underline-offset:3px;background:var(--hi)}
+.w.box{background:var(--hi);box-shadow:inset 0 0 0 1px rgba(255,74,61,.7)}
+.w.prev{background:var(--hi)}
+
+#fx{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+#fx line{vector-effect:non-scaling-stroke}
+.xh{stroke:rgba(255,255,255,.16);stroke-width:1} .hot .xh{stroke:var(--red);stroke-opacity:.85}
+.pl{stroke:rgba(255,255,255,.5);stroke-width:.75}
+.bl{stroke:var(--red);stroke-opacity:.45;stroke-width:.75;stroke-dasharray:3 3}
+.dl{stroke:rgba(255,255,255,.35);stroke-width:1;stroke-dasharray:1 4;stroke-linecap:round}
+.ghost{fill:none;stroke:var(--red);stroke-width:1}
+.cnt{fill:var(--dim);font:9px var(--font);text-anchor:middle}
+
+#dials{position:absolute;inset:0;pointer-events:none}
+.dial{position:absolute;left:0;top:0;display:flex;align-items:center;gap:8px;white-space:nowrap;font-size:12px;line-height:22px;color:var(--fg)}
+.pie{width:11px;height:11px;border-radius:50%;background:conic-gradient(var(--red) var(--v,0%),#3a1512 0)}
+.dial em{font-style:normal;color:var(--red);margin-left:6px}
+body.narrow #dials{position:fixed;inset:auto 0 44px 0;height:84px;padding:8px 16px;display:flex;flex-direction:column;gap:0;background:var(--bg);pointer-events:none}
+body.narrow .dial{position:static;transform:none!important}
+body.narrow .dial.x{display:none}
+
+#bar{position:fixed;left:0;right:0;bottom:0;height:44px;display:flex;align-items:center;gap:18px;padding:0 8px 0 16px;border-top:1px solid #1a1a1a;background:var(--bg);font-size:12px;color:var(--dim);z-index:4}
+#bar span b{font-weight:500;color:var(--fg)}
+#bar .sp{flex:1}
+#bar button{min-width:44px;height:44px;border:0;background:none;color:var(--dim);font:inherit;cursor:pointer}
+#bar button:hover{color:var(--fg)} #bar button[aria-pressed="true"]{color:var(--fg)}
+#bar button:focus-visible{outline:1px solid var(--red);outline-offset:-4px;color:var(--fg)}
+body.narrow #bar{gap:10px;padding-left:12px} body.narrow .opt{display:none}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+#meas{position:absolute;visibility:hidden;white-space:pre;top:-99px}
+@media (prefers-reduced-motion:reduce){#page{transition:none}}
+</style>
+</head>
+<body>
+<header id="hd"><b>STEER</b>Point to steer the story. Click a word to pull toward it. Drag across words to push away.</header>
+
+<main id="stage" tabindex="0" aria-label="A story that writes itself. Move the pointer or use the arrow keys to steer it. Space pauses.">
+  <div id="page"></div>
+  <svg id="fx" aria-hidden="true"></svg>
+  <div id="dials" aria-hidden="true"></div>
+</main>
+
+<footer id="bar">
+  <span id="s-rate"></span><span id="s-words"></span><span id="s-pin" class="opt"></span><span id="s-box" class="opt"></span>
+  <span class="sp"></span>
+  <button id="b-pause" type="button" aria-label="Pause writing">❚❚</button>
+  <button id="b-reset" type="button" aria-label="Start over">↺</button>
+  <button id="b-snd" type="button" aria-pressed="false" aria-label="Sound">♪ off</button>
+</footer>
+<span id="meas" aria-hidden="true">MMMMMMMMMM</span>
+
+<script>
+"use strict";
+// [text, tension 0..1, mode, tone] — written for this page.
+const RAW=[
+["The last ferry of the winter left the harbour with its lamps lit and its deck empty of everyone but the radio operator.",.15,"description","calm"],
+["Ines kept one hand on the rail and watched the salt fog fold itself around the bell buoy.",.2,"description","quiet"],
+["Somewhere under the ice, the old cable hummed the way a throat hums before it speaks.",.3,"description","uneasy"],
+["She counted the lamps along the quay until they thinned to a single bead and went out.",.25,"description","wistful"],
+["The radio crackled once, then settled into a patient hiss, as if listening back.",.35,"description","uneasy"],
+["\"You still there?\" the harbour master asked, and his voice came out of the speaker thin as paper.",.4,"dialogue","tense"],
+["\"Still here,\" Ines said. \"The tide is leaving without us.\"",.45,"dialogue","tense"],
+["Then the engine coughed, caught, and coughed again, shaking rust loose from the rope lockers.",.6,"action","tense"],
+["She ran the length of the deck, boots ringing on the iron, one lamp swinging wild in her fist.",.75,"action","frantic"],
+["Ice cracked along the hull like a rifle shot and the whole ferry leaned toward the dark.",.9,"action","frantic"],
+["The rope snapped, whipped across the rail, and took the lamp out of her hand.",.85,"action","frantic"],
+["For a moment there was no sound at all, only the bell buoy counting out the dark.",.5,"description","eerie"],
+["She found the map where she had left it, the corner of the coastline already damp with spray.",.3,"description","calm"],
+["Her thumb settled on the faded mark where no chart had ever shown a harbour.",.4,"description","curious"],
+["A low horn answered from the fog, longer than any ship she knew.",.65,"description","eerie"],
+["The signal lamp flickered, steadied, and threw her shadow forty feet across the ice.",.55,"description","eerie"],
+["\"Hold your course,\" the voice said, and she could not tell whether it came from the radio or the water.",.7,"dialogue","eerie"],
+["She held it, though every instinct told her to turn the wheel and run.",.8,"reflection","fearful"],
+["Salt dried on her lips; the compass needle shivered, then pointed at nothing she could name.",.7,"description","eerie"],
+["Years from now she would say it was courage, but it felt more like listening.",.35,"reflection","tender"],
+["The fog thinned by degrees, the way a held breath loosens.",.25,"description","calm"],
+["Ahead, a row of lamps rose out of the water, each one bright and patient and entirely unfamiliar.",.5,"description","hopeful"],
+["The engine settled into a steady rhythm that matched the beating of her heart.",.3,"description","tender"],
+["She laughed, short and startled, and the sound went out across the ice and did not come back.",.45,"reflection","wistful"],
+["A rope ladder dropped from the quay and swung against the hull, begging to be climbed.",.55,"action","hopeful"],
+["She climbed, hand over hand, with the map folded against her ribs like a second skin.",.6,"action","determined"],
+["At the top, a stranger held out a lamp and said only that they had been waiting for the tide.",.5,"dialogue","curious"],
+["Behind her the ferry sighed, shifted, and slid quietly beneath the harbour ice.",.8,"action","somber"],
+["Nobody spoke; the bell buoy rang once, and the fog closed over the place like a page turning.",.4,"description","somber"],
+["Morning would find the quay empty, the lamps burnt low, and one set of boot prints leading inland.",.25,"description","quiet"],
+["She followed them anyway.",.5,"reflection","determined"],
+["The wind carried the smell of rope and tar and something older, like a promise kept too long.",.35,"description","wistful"],
+["Every window she passed showed a lit room and a chair pulled out for someone who had not arrived.",.3,"description","tender"],
+["The radio in her pocket clicked twice, and a voice she almost knew began to read her name.",.75,"dialogue","eerie"],
+["She stopped walking. The street stopped with her.",.7,"action","fearful"],
+["Somewhere behind the houses the tide turned, and every lamp in the village leaned toward the sea.",.85,"description","eerie"],
+];
+const norm=s=>s.toLowerCase().replace(/[^a-z]/g,"");
+const CORPUS=RAW.map(([s,t,m,tone])=>({s,t,m,tone,x:new Set(s.split(" ").map(norm))}));
+const SCALE={
+  tension:["very relaxed","relaxed","somewhat tense","tense","very strained"],
+  pace:["very expansive","somewhat expansive","steady","somewhat compressed","very compressed"],
+  surprise:["very expected","expected","somewhat unexpected","unexpected","very unexpected"]
+};
+const lab=(k,v)=>SCALE[k][Math.min(4,Math.floor(v*5))];
+const clamp=(v,a=0,b=1)=>Math.min(b,Math.max(a,v));
+const REDUCED=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const MAXWORDS=1400, SLOW=190, FAST=45;
+
+const $=s=>document.querySelector(s);
+const stage=$("#stage"),page=$("#page"),fx=$("#fx"),dialsEl=$("#dials"),meas=$("#meas");
+let cw=8,cols=60,narrow=false,left=24,dialX=0;
+
+const st={words:[],lines:[],queue:[],used:[],pins:[],boxes:new Set(),timer:0,paused:false,full:false,seeded:false,
+  target:{t:.4,p:.5,s:0},act:{t:.4,p:.5,s:0},cur:null,lastT:.4,rate:0,lastAt:0,
+  ptr:{x:0,y:0,seen:false,at:0,sp:0,lx:0,ly:0,lt:0},drag:null,sound:false};
+
+/* ---------- layout ---------- */
+function layout(){
+  const W=innerWidth; narrow=W<860; document.body.classList.toggle("narrow",narrow);
+  cw=meas.getBoundingClientRect().width/10||8;
+  const gw=narrow?118:190, dialW=narrow?0:280;
+  const avail=W-(narrow?24:48)-gw-dialW;
+  cols=Math.max(24,Math.floor(Math.min(cw*64,avail)/cw));
+  const blockW=gw+cols*cw+dialW;
+  left=narrow?12:Math.max(24,(W-blockW)/2);
+  page.style.left=left+"px"; dialX=left+gw+cols*cw+28;
+  rebuild();
+}
+function rebuild(){
+  const ws=st.words; st.words=[]; st.lines=[]; page.textContent="";
+  ws.forEach(w=>{place(w);}); annos(); scroll();
+}
+function newLine(){
+  const n=st.lines.length+1, row=document.createElement("div"); row.className="row";
+  row.innerHTML=`<span class="ln" aria-hidden="true">${n===1||n%5===0?n:""}</span><span class="an" aria-hidden="true"></span><span class="bars" aria-hidden="true">${"<i></i>".repeat(10)}</span><span class="dash" aria-hidden="true">–</span><span class="txt"></span>`;
+  page.appendChild(row);
+  const L={row,txt:row.querySelector(".txt"),an:row.querySelector(".an"),cells:[...row.querySelectorAll(".bars i")],len:0,n:0,ts:0,id:n};
+  st.lines.push(L); return L;
+}
+function place(w){
+  let L=st.lines[st.lines.length-1];
+  if(!L||(L.len>0&&L.len+w.text.length>cols)) L=newLine();
+  const el=document.createElement("span");
+  el.className="w"+(w.pin?" pin":"")+(w.box?" box":"");
+  el.textContent=w.text+" "; w.i=st.words.length; el.dataset.i=w.i;
+  L.txt.appendChild(el); L.len+=w.text.length+1; L.n++; L.ts+=w.t;
+  w.el=el; w.line=L; st.words.push(w); paint(L);
+}
+function paint(L){
+  const m=L.ts/L.n, filled=Math.min(10,Math.max(1,Math.round(1+m*8)+(L.id*7%3===0?1:0)));
+  L.cells.forEach((c,i)=>{c.className=i<filled?(m>.65&&i>=filled-3?"hot":"on"):"";});
+}
+function annos(){
+  st.lines.forEach(L=>{L.an.textContent="";});
+  st.pins.forEach((wi,r)=>{const w=st.words[wi]; if(!w)return;
+    w.line.an.insertAdjacentHTML("beforeend",`${r+1} <b class="${w.t>.65?"r":""}">${w.t.toFixed(2).slice(1)}</b> `);});
+}
+function scroll(){
+  const H=stage.clientHeight, top=88+st.lines.length*22, lim=H*.62;
+  page.style.transform=`translateY(${-Math.max(0,top-lim)}px)`;
+}
+
+/* ---------- writing ---------- */
+function interval(){return SLOW+(FAST-SLOW)*st.target.p}
+function pick(){
+  const pins=st.pins.map(i=>norm(st.words[i].text)), bx=[...st.boxes].map(i=>norm(st.words[i].text));
+  let best=-1,bs=9;
+  CORPUS.forEach((c,k)=>{
+    if(st.used.includes(k))return;
+    let s=Math.abs(c.t-st.target.t)+Math.random()*.3;
+    if(pins.some(p=>c.x.has(p)))s-=.25;   // pinned word pulls the story toward it
+    if(bx.some(p=>c.x.has(p)))s+=.5;      // boxed word pushes it away
+    if(s<bs){bs=s;best=k;}
+  });
+  st.used.push(best); if(st.used.length>12)st.used.shift();
+  return best;
+}
+function nextSentence(){
+  const c=CORPUS[pick()];
+  st.act.s=clamp(Math.abs(c.t-st.lastT)*2.2); st.lastT=c.t; st.cur=c;
+  st.queue=c.s.split(" ").map(text=>({text,t:c.t}));
+}
+function add(w){
+  place(w); scroll(); tick(w.t);
+  const now=performance.now(); if(st.lastAt)st.rate=st.rate*.9+(1000/(now-st.lastAt))*.1; st.lastAt=now;
+  if(!st.seeded&&st.words.length>=40){
+    st.seeded=true;
+    ["fog","bell","cable","lamps","ice"].forEach(t=>{const w2=st.words.find(x=>norm(x.text)===t); if(w2&&st.pins.length<3)togglePin(w2.i);});
+  }
+  if(st.words.length>=MAXWORDS){st.full=true;st.paused=true;}
+  status();
+}
+function step(){
+  clearTimeout(st.timer);
+  if(st.paused)return;
+  if(!st.queue.length)nextSentence();
+  const w=st.queue.shift(); add(w);
+  const pause=/[.!?]["”]?$/.test(w.text)?260:/[,;]$/.test(w.text)?90:0;
+  st.act.p=clamp(1-(interval()-FAST)/(SLOW-FAST));
+  st.timer=setTimeout(step,interval()+pause);
+}
+function prefill(n){for(let k=0;k<n;k++){nextSentence();while(st.queue.length){const w=st.queue.shift();place(w);}} scroll();status();}
+function reset(){
+  clearTimeout(st.timer); st.words=[];st.lines=[];st.queue=[];st.used=[];st.pins=[];st.boxes=new Set();st.seeded=false;st.full=false;st.rate=0;st.lastAt=0;
+  page.textContent=""; st.paused=false; setPauseBtn(); prefill(REDUCED?10:2); if(REDUCED){st.paused=true;setPauseBtn();} else step();
+}
+
+/* ---------- pins & boxes ---------- */
+function togglePin(i){
+  const w=st.words[i]; if(!w)return; w.pin=!w.pin; w.el.classList.toggle("pin",w.pin);
+  st.pins=w.pin?[...st.pins,i]:st.pins.filter(x=>x!==i); annos(); status();
+}
+function toggleBox(a,b){
+  const [lo,hi]=a<b?[a,b]:[b,a]; let all=true;
+  for(let i=lo;i<=hi;i++)if(!st.words[i].box)all=false;
+  for(let i=lo;i<=hi;i++){const w=st.words[i]; w.box=!all; w.el.classList.toggle("box",w.box); all?st.boxes.delete(i):st.boxes.add(i);}
+  status();
+}
+const wordAt=(x,y)=>{const e=document.elementFromPoint(x,y);const w=e&&e.closest&&e.closest(".w");return w?+w.dataset.i:null;};
+function preview(a,b){
+  st.words.forEach(w=>w.el.classList.remove("prev"));
+  if(a==null||b==null)return; const [lo,hi]=a<b?[a,b]:[b,a];
+  for(let i=lo;i<=hi;i++)st.words[i].el.classList.add("prev");
+}
+stage.addEventListener("pointerdown",e=>{
+  const i=wordAt(e.clientX,e.clientY); st.drag=i==null?null:{a:i,b:i}; aim(e);
+});
+stage.addEventListener("pointermove",e=>{
+  aim(e);
+  if(st.drag){const i=wordAt(e.clientX,e.clientY); if(i!=null){st.drag.b=i;preview(st.drag.a,st.drag.b);}}
+});
+addEventListener("pointerup",()=>{
+  if(!st.drag)return; const {a,b}=st.drag; st.drag=null; preview();
+  a===b?togglePin(a):toggleBox(a,b);
+});
+function aim(e){
+  const r=stage.getBoundingClientRect(), p=st.ptr, now=performance.now();
+  p.x=e.clientX-r.left; p.y=e.clientY-r.top; p.seen=true; p.at=now;
+  if(p.lt){const v=Math.hypot(p.x-p.lx,p.y-p.ly)/Math.max(1,now-p.lt); p.sp=p.sp*.7+clamp(v/1.5)*.3;}
+  p.lx=p.x;p.ly=p.y;p.lt=now;
+  st.target.t=clamp(1-p.y/r.height); st.target.p=clamp(p.x/r.width);
+}
+stage.addEventListener("keydown",e=>{
+  const p=st.ptr, r=stage.getBoundingClientRect(), d=32, k=e.key;
+  if(k===" "){e.preventDefault();togglePause();return;}
+  const m={ArrowLeft:[-d,0],ArrowRight:[d,0],ArrowUp:[0,-d],ArrowDown:[0,d]}[k]; if(!m)return;
+  e.preventDefault(); if(!p.seen){p.x=r.width/2;p.y=r.height/2;p.seen=true;}
+  p.x=clamp(p.x+m[0],0,r.width); p.y=clamp(p.y+m[1],0,r.height); p.at=performance.now(); p.sp=.5;
+  st.target.t=clamp(1-p.y/r.height); st.target.p=clamp(p.x/r.width);
+});
+
+/* ---------- controls, status, sound ---------- */
+function togglePause(){
+  if(st.full){reset();return;}
+  st.paused=!st.paused; setPauseBtn();
+  if(REDUCED){ if(!st.paused){st.paused=true;setPauseBtn(); nextSentence(); while(st.queue.length)add(st.queue.shift());} return; }
+  st.paused?clearTimeout(st.timer):step();
+}
+function setPauseBtn(){const b=$("#b-pause");b.textContent=st.paused?"▶":"❚❚";b.setAttribute("aria-label",REDUCED?"Write the next sentence":st.paused?"Resume writing":"Pause writing");}
+$("#b-pause").onclick=()=>{togglePause();stage.focus({preventScroll:true});};
+$("#b-reset").onclick=()=>{reset();stage.focus({preventScroll:true});};
+$("#b-snd").onclick=e=>{st.sound=!st.sound;e.currentTarget.setAttribute("aria-pressed",st.sound);e.currentTarget.textContent=st.sound?"♪ on":"♪ off";};
+function status(){
+  $("#s-rate").innerHTML=`» <b>${st.paused?"–":st.rate.toFixed(1)}</b> w/s`;
+  $("#s-words").innerHTML=`¶ <b>${st.words.length}</b> words${st.full?" · page full":""}`;
+  $("#s-pin").innerHTML=`pin <b>${st.pins.length}</b>`;
+  $("#s-box").innerHTML=`box <b>${st.boxes.size}</b>`;
+}
+let ac;
+function tick(t){
+  if(!st.sound)return;
+  try{ac=ac||new AudioContext(); const o=ac.createOscillator(),g=ac.createGain(),n=ac.currentTime;
+    o.frequency.value=180+t*520; g.gain.setValueAtTime(.02,n); g.gain.exponentialRampToValueAtTime(.0001,n+.07);
+    o.connect(g).connect(ac.destination); o.start(n); o.stop(n+.08);}catch(_){}
+}
+
+/* ---------- overlay ---------- */
+const DIALS=[
+  {k:"tension",get:()=>st.act.t,tgt:()=>st.target.t,txt:v=>lab("tension",st.target.t)},
+  {k:"pace",get:()=>st.act.p,tgt:()=>st.target.p,txt:()=>lab("pace",st.target.p)},
+  {k:"surprise",get:()=>st.act.s,tgt:()=>st.target.s,txt:()=>lab("surprise",st.target.s)},
+  {k:"mode",x:1,get:()=>.7,txt:()=>st.cur?st.cur.m:"–"},
+  {k:"tone",x:1,get:()=>.7,txt:()=>st.cur?st.cur.tone:"–"},
+];
+DIALS.forEach(d=>{const el=document.createElement("div");el.className="dial"+(d.x?" x":"");el.innerHTML='<i class="pie"></i><span></span>';d.el=el;d.pie=el.firstChild;d.sp=el.lastChild;dialsEl.appendChild(el);});
+
+function frame(now){
+  requestAnimationFrame(frame);
+  const W=stage.clientWidth,H=stage.clientHeight,a=st.act,tg=st.target;
+  tg.s=Math.max(0,tg.s*.97); st.ptr.sp*=.96; tg.s=Math.max(tg.s,st.ptr.sp*(now-st.ptr.at<1500?1:0));
+  if(st.cur)a.t+=(st.cur.t-a.t)*.08;
+  const last=st.words[st.words.length-1]; if(!last)return;
+  const sr=stage.getBoundingClientRect(), r=last.el.getBoundingClientRect();
+  const hx=r.right-cw-sr.left, hy=r.top+r.height/2-sr.top;
+  const hot=now-st.ptr.at<1500;
+  let s=`<g class="${hot?"hot":""}"><line class="xh" x1="0" x2="${W}" y1="${hy}" y2="${hy}"/><line class="xh" x1="${hx}" x2="${hx}" y1="0" y2="${H}"/></g>`;
+  st.pins.forEach(i=>{const q=st.words[i].el.getBoundingClientRect(); s+=`<line class="pl" x1="${hx}" y1="${hy}" x2="${q.left+q.width/2-sr.left}" y2="${q.top+q.height-sr.top}"/>`;});
+  st.boxes.forEach(i=>{const q=st.words[i].el.getBoundingClientRect(); s+=`<line class="bl" x1="${hx}" y1="${hy}" x2="${q.left+q.width/2-sr.left}" y2="${q.top+q.height-sr.top}"/>`;});
+  const y0=narrow?0:clamp(hy-30,80,H-DIALS.length*26-12);
+  DIALS.forEach((d,k)=>{
+    const v=d.get(), tv=d.tgt?d.tgt():null, shown=tv==null?v:tv, real=tv==null?null:Math.round((1-Math.abs(v-tv))*100);
+    const txt=`${d.k}: ${d.txt()}`+(real==null?"":`<em>${real}% realized</em>`);
+    if(d.last!==txt){d.sp.innerHTML=txt;d.last=txt;}
+    d.pie.style.setProperty("--v",Math.round(shown*100)+"%");
+    if(!narrow){const y=y0+k*26; d.el.style.transform=`translate(${dialX}px,${y}px)`;
+      s+=`<line class="dl" x1="${hx}" y1="${hy}" x2="${dialX-4}" y2="${y+11}"/>`;}
+  });
+  s+=`<circle cx="${hx}" cy="${hy}" r="4.5" fill="none" stroke="#fff" stroke-opacity=".8"/><circle cx="${hx}" cy="${hy}" r="1.6" fill="#fff"/><text class="cnt" x="${hx}" y="${hy+19}">${st.words.length} words</text>`;
+  if(st.ptr.seen)s+=`<circle class="ghost" cx="${st.ptr.x}" cy="${st.ptr.y}" r="9" opacity="${hot?1:.45}"/><line class="pl" x1="${st.ptr.x-4}" x2="${st.ptr.x+4}" y1="${st.ptr.y}" y2="${st.ptr.y}" stroke="#ff4a3d"/>`;
+  fx.innerHTML=s;
+}
+
+/* ---------- boot ---------- */
+let rz;addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(layout,120);});
+layout(); reset();
+if(document.fonts&&document.fonts.ready)document.fonts.ready.then(layout);
+requestAnimationFrame(frame);
+stage.focus({preventScroll:true});
+</script>
+</body>
+</html>
