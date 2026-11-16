@@ -48,6 +48,13 @@ body.narrow{--w-ln:24px; --w-an:44px; --w-bars:39px; --w-dash:14px; --cellw:3px;
 
 #dials{position:absolute;inset:0;pointer-events:none}
 .dial{position:absolute;left:0;top:0;display:flex;align-items:center;gap:8px;white-space:nowrap;font-size:12px;line-height:22px;color:var(--fg)}
+.mk{width:14px;color:var(--red);font-weight:400;text-align:right}
+.dial.adj{pointer-events:auto;cursor:pointer;color:var(--dim)}
+.dial.adj.sel{color:var(--fg)}
+body.shift .dial.adj{color:var(--fg)} body.shift .dial.adj.sel em,body.shift .dial.adj.sel{color:var(--red)}
+body.shift .dial:not(.adj){opacity:.45}
+body.shift #stage{cursor:ns-resize}
+body.narrow .dial.adj{display:none} body.narrow .mk{display:none}
 .pie{width:11px;height:11px;border-radius:50%;background:conic-gradient(var(--red) var(--v,0%),#3a1512 0)}
 .dial em{font-style:normal;color:var(--red);margin-left:6px}
 body.narrow #dials{position:fixed;inset:auto 0 44px 0;height:84px;padding:8px 16px;display:flex;flex-direction:column;gap:0;background:var(--bg);pointer-events:none}
@@ -67,7 +74,7 @@ body.narrow #bar{gap:10px;padding-left:12px} body.narrow .opt{display:none}
 </style>
 </head>
 <body>
-<header id="hd"><b>STEER</b>Point to steer the story. Click a word to pull toward it. Drag across words to push away.</header>
+<header id="hd"><b>STEER</b>Point to steer the story. Click a word to pull toward it. Drag across words to push away. Hold Shift and move, scroll or press ↑↓ to tune a meter; 1–5 picks one.</header>
 
 <main id="stage" tabindex="0" aria-label="A story that writes itself. Move the pointer or use the arrow keys to steer it. Space pauses.">
   <div id="page"></div>
@@ -143,7 +150,8 @@ let cw=8,cols=60,narrow=false,left=24,dialX=0;
 
 const st={words:[],lines:[],queue:[],used:[],pins:[],boxes:new Set(),timer:0,paused:false,full:false,seeded:false,
   target:{t:.4,p:.5,s:0},act:{t:.4,p:.5,s:0},cur:null,lastT:.4,rate:0,lastAt:0,
-  ptr:{x:0,y:0,seen:false,at:0,sp:0,lx:0,ly:0,lt:0},drag:null,sound:false};
+  ptr:{x:0,y:0,seen:false,at:0,sp:0,lx:0,ly:0,lt:0,sy:null},drag:null,sound:false,
+  shift:false,sel:0,set:{confidence:.7,pull:.6,push:.6,variety:.5,mode:.5,modeOn:false}};
 
 /* ---------- layout ---------- */
 function layout(){
@@ -198,14 +206,30 @@ function pick(){
   let best=-1,bs=9;
   CORPUS.forEach((c,k)=>{
     if(st.used.includes(k))return;
-    let s=Math.abs(c.t-st.target.t)+Math.random()*.3;
-    if(pins.some(p=>c.x.has(p)))s-=.25;   // pinned word pulls the story toward it
-    if(bx.some(p=>c.x.has(p)))s+=.5;      // boxed word pushes it away
+    const S=st.set;
+    let s=Math.abs(c.t-st.target.t)+Math.random()*(1-S.confidence)*.9; // low confidence = looser, noisier picks
+    if(pins.some(p=>c.x.has(p)))s-=.42*S.pull;   // pinned word pulls the story toward it
+    if(bx.some(p=>c.x.has(p)))s+=.83*S.push;     // boxed word pushes it away
+    if(S.modeOn)s+=Math.abs(MODEIDX[c.m]-S.mode)*.5;
     if(s<bs){bs=s;best=k;}
   });
-  st.used.push(best); if(st.used.length>12)st.used.shift();
+  st.used.push(best); while(st.used.length>Math.round(2+st.set.variety*20))st.used.shift();
   return best;
 }
+const MODEIDX={description:0,reflection:.33,dialogue:.67,action:1};
+const DEFAULTS={confidence:.7,pull:.6,push:.6,variety:.5,mode:.5};
+const ADJ=[
+  {k:"confidence",lab:["very hesitant","hesitant","measured","confident","very confident"]},
+  {k:"pull",lab:["barely pulled","weak pull","steady pull","strong pull","locked on"]},
+  {k:"push",lab:["ignores boxes","gentle push","steady push","firm push","hard avoid"]},
+  {k:"variety",lab:["repeats freely","loose","balanced","varied","never repeats"]},
+  {k:"mode",name:"mode bias",lab:["description","reflection","dialogue","action"]},
+];
+function adjust(d){
+  const a=ADJ[st.sel]; if(a.k==="mode")st.set.modeOn=true;
+  st.set[a.k]=clamp(st.set[a.k]+d);
+}
+function resetSel(){const a=ADJ[st.sel]; st.set[a.k]=DEFAULTS[a.k]; if(a.k==="mode")st.set.modeOn=false;}
 function nextSentence(){
   const c=CORPUS[pick()];
   st.act.s=clamp(Math.abs(c.t-st.lastT)*2.2); st.lastT=c.t; st.cur=c;
@@ -266,6 +290,11 @@ addEventListener("pointerup",()=>{
 });
 function aim(e){
   const r=stage.getBoundingClientRect(), p=st.ptr, now=performance.now();
+  st.shift=e.shiftKey;
+  if(st.shift){ // shift held: the target freezes and vertical movement tunes the selected meter
+    const ny=e.clientY-r.top; if(p.sy!=null)adjust((p.sy-ny)/250); p.sy=ny; p.at=now; return;
+  }
+  p.sy=null;
   p.x=e.clientX-r.left; p.y=e.clientY-r.top; p.seen=true; p.at=now;
   if(p.lt){const v=Math.hypot(p.x-p.lx,p.y-p.ly)/Math.max(1,now-p.lt); p.sp=p.sp*.7+clamp(v/1.5)*.3;}
   p.lx=p.x;p.ly=p.y;p.lt=now;
@@ -274,11 +303,27 @@ function aim(e){
 stage.addEventListener("keydown",e=>{
   const p=st.ptr, r=stage.getBoundingClientRect(), d=32, k=e.key;
   if(k===" "){e.preventDefault();togglePause();return;}
+  if(/^[1-5]$/.test(k)){st.sel=+k-1;e.preventDefault();return;}
+  if(k==="Backspace"||k==="Delete"){resetSel();e.preventDefault();return;}
+  if(e.shiftKey){
+    if(k==="ArrowUp")adjust(.05); else if(k==="ArrowDown")adjust(-.05);
+    else if(k==="ArrowLeft")st.sel=(st.sel+ADJ.length-1)%ADJ.length; else if(k==="ArrowRight")st.sel=(st.sel+1)%ADJ.length;
+    else return;
+    e.preventDefault();return;
+  }
   const m={ArrowLeft:[-d,0],ArrowRight:[d,0],ArrowUp:[0,-d],ArrowDown:[0,d]}[k]; if(!m)return;
   e.preventDefault(); if(!p.seen){p.x=r.width/2;p.y=r.height/2;p.seen=true;}
   p.x=clamp(p.x+m[0],0,r.width); p.y=clamp(p.y+m[1],0,r.height); p.at=performance.now(); p.sp=.5;
   st.target.t=clamp(1-p.y/r.height); st.target.p=clamp(p.x/r.width);
 });
+
+stage.addEventListener("wheel",e=>{
+  if(!e.shiftKey)return; e.preventDefault(); // browsers may report shift+wheel on the x axis
+  adjust(-Math.sign(e.deltaY||e.deltaX)*.04);
+},{passive:false});
+addEventListener("keydown",e=>{st.shift=e.shiftKey;});
+addEventListener("keyup",e=>{st.shift=e.shiftKey; if(!st.shift)st.ptr.sy=null;});
+addEventListener("blur",()=>{st.shift=false;st.ptr.sy=null;});
 
 /* ---------- controls, status, sound ---------- */
 function togglePause(){
@@ -312,8 +357,15 @@ const DIALS=[
   {k:"surprise",get:()=>st.act.s,tgt:()=>st.target.s,txt:()=>lab("surprise",st.target.s)},
   {k:"mode",x:1,get:()=>.7,txt:()=>st.cur?st.cur.m:"–"},
   {k:"tone",x:1,get:()=>.7,txt:()=>st.cur?st.cur.tone:"–"},
+  ...ADJ.map((a,i)=>({k:a.name||a.k,adj:1,idx:i,a,get:()=>st.set[a.k],
+    txt:()=>a.k==="mode"&&!st.set.modeOn?"auto":a.lab[Math.min(a.lab.length-1,Math.floor(st.set[a.k]*a.lab.length))]})),
 ];
-DIALS.forEach(d=>{const el=document.createElement("div");el.className="dial"+(d.x?" x":"");el.innerHTML='<i class="pie"></i><span></span>';d.el=el;d.pie=el.firstChild;d.sp=el.lastChild;dialsEl.appendChild(el);});
+DIALS.forEach(d=>{
+  const el=document.createElement("div");el.className="dial"+(d.x?" x":"")+(d.adj?" adj":"");
+  el.innerHTML='<b class="mk"></b><i class="pie"></i><span></span>';
+  d.el=el;d.mk=el.firstChild;d.pie=el.children[1];d.sp=el.lastChild;dialsEl.appendChild(el);
+  if(d.adj){el.addEventListener("pointerdown",e=>e.stopPropagation());el.addEventListener("click",()=>{st.sel=d.idx;stage.focus({preventScroll:true});});}
+});
 
 function frame(now){
   requestAnimationFrame(frame);
@@ -327,14 +379,17 @@ function frame(now){
   let s=`<g class="${hot?"hot":""}"><line class="xh" x1="0" x2="${W}" y1="${hy}" y2="${hy}"/><line class="xh" x1="${hx}" x2="${hx}" y1="0" y2="${H}"/></g>`;
   st.pins.forEach(i=>{const q=st.words[i].el.getBoundingClientRect(); s+=`<line class="pl" x1="${hx}" y1="${hy}" x2="${q.left+q.width/2-sr.left}" y2="${q.top+q.height-sr.top}"/>`;});
   st.boxes.forEach(i=>{const q=st.words[i].el.getBoundingClientRect(); s+=`<line class="bl" x1="${hx}" y1="${hy}" x2="${q.left+q.width/2-sr.left}" y2="${q.top+q.height-sr.top}"/>`;});
-  const y0=narrow?0:clamp(hy-30,80,H-DIALS.length*26-12);
+  document.body.classList.toggle("shift",st.shift);
+  const y0=narrow?0:clamp(hy-30,80,H-DIALS.length*26-24);
   DIALS.forEach((d,k)=>{
     const v=d.get(), tv=d.tgt?d.tgt():null, shown=tv==null?v:tv, real=tv==null?null:Math.round((1-Math.abs(v-tv))*100);
-    const txt=`${d.k}: ${d.txt()}`+(real==null?"":`<em>${real}% realized</em>`);
+    const pct=d.adj&&!(d.k==="mode bias"&&!st.set.modeOn)?`<em>${Math.round(v*100)}%</em>`:"";
+    const txt=`${d.k}: ${d.txt()}`+(real==null?pct:`<em>${real}% realized</em>`);
     if(d.last!==txt){d.sp.innerHTML=txt;d.last=txt;}
+    const sel=d.adj&&d.idx===st.sel; d.el.classList.toggle("sel",!!sel); d.mk.textContent=sel?"▸":"";
     d.pie.style.setProperty("--v",Math.round(shown*100)+"%");
-    if(!narrow){const y=y0+k*26; d.el.style.transform=`translate(${dialX}px,${y}px)`;
-      s+=`<line class="dl" x1="${hx}" y1="${hy}" x2="${dialX-4}" y2="${y+11}"/>`;}
+    if(!narrow){const y=y0+k*26+(d.adj?12:0); d.el.style.transform=`translate(${dialX-14}px,${y}px)`;
+      if(!d.adj)s+=`<line class="dl" x1="${hx}" y1="${hy}" x2="${dialX-4}" y2="${y+11}"/>`;}
   });
   s+=`<circle cx="${hx}" cy="${hy}" r="4.5" fill="none" stroke="#fff" stroke-opacity=".8"/><circle cx="${hx}" cy="${hy}" r="1.6" fill="#fff"/><text class="cnt" x="${hx}" y="${hy+19}">${st.words.length} words</text>`;
   if(st.ptr.seen)s+=`<circle class="ghost" cx="${st.ptr.x}" cy="${st.ptr.y}" r="9" opacity="${hot?1:.45}"/><line class="pl" x1="${st.ptr.x-4}" x2="${st.ptr.x+4}" y1="${st.ptr.y}" y2="${st.ptr.y}" stroke="#ff4a3d"/>`;
